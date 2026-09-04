@@ -88,10 +88,30 @@ def write(run: Run, name: str, data) -> None:
     (run.data / f"{name}.json").write_text(json.dumps(data, indent=2, default=str))
 
 
+def field(obj, *names, default=None):
+    """Read a field from an Apify API result, which is a dict in apify-client 1.x
+    and a typed object (snake_case attributes) in 2.x. Tries every name given."""
+    for n in names:
+        if isinstance(obj, dict):
+            if n in obj:
+                return obj[n]
+        elif hasattr(obj, n):
+            return getattr(obj, n)
+    return default
+
+
+def as_dict(obj) -> dict:
+    return obj if isinstance(obj, dict) else vars(obj)
+
+
 def call_actor(run: Run, actor: str, run_input: dict) -> list[dict]:
     result = run.client.actor(actor).call(run_input=run_input)
-    run.apify_runs.append((actor, result["id"]))
-    return list(run.client.dataset(result["defaultDatasetId"]).iterate_items())
+    run_id = field(result, "id")
+    dataset_id = field(result, "defaultDatasetId", "default_dataset_id")
+    if not run_id or not dataset_id:
+        raise RuntimeError(f"{actor}: unexpected run result shape: {type(result).__name__}")
+    run.apify_runs.append((actor, run_id))
+    return [as_dict(it) for it in run.client.dataset(dataset_id).iterate_items()]
 
 
 def _post_timestamp(p: dict) -> datetime | None:
@@ -390,8 +410,8 @@ def print_cost(run: Run) -> None:
     total = 0.0
     run.log("\n[cost]       Apify spend this invocation:")
     for actor, run_id in run.apify_runs:
-        info = run.client.run(run_id).get() or {}
-        usd = float(info.get("usageTotalUsd") or 0)
+        info = run.client.run(run_id).get()
+        usd = float(field(info, "usageTotalUsd", "usage_total_usd", default=0) or 0)
         total += usd
         run.log(f"             {actor:<45} ${usd:.2f}")
     run.log(f"             {'total':<45} ${total:.2f}")
