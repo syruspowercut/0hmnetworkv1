@@ -141,6 +141,8 @@ Every step caches to `events/<event>/data/*.json`. To redo a step, delete its ca
 and run again — earlier steps are skipped:
 
 - Change scoring / DM template → delete nothing, just re-run (`rank` is free)
+- Drop likes on old posts → re-run with a later since date, or `summary.py --since YYYY-MM-DD`;
+  nothing is re-scraped, `engagers.csv` is just rebuilt from the cached likes
 - Enrich more people → delete `enriched.json`, bump `--enrich-top`
 - Add a seed → delete everything in `data/`
 

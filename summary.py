@@ -13,6 +13,7 @@ inline.
 
 Usage:
   python summary.py --event reading-2026-05-22
+  python summary.py --event reading-2026-05-22 --since 2026-01-01   # only likes on 2026 posts
 """
 from __future__ import annotations
 
@@ -26,8 +27,9 @@ ROOT = Path(__file__).parent
 EVENTS = ROOT / "events"
 
 
-def build_engagers(event: str, log=print) -> Path:
-    """Write engagers.csv for one event from its cached data. Raises RuntimeError if not scraped yet."""
+def build_engagers(event: str, since: str | None = None, log=print) -> Path:
+    """Write engagers.csv for one event from its cached data. Raises RuntimeError if not scraped yet.
+    `since` (YYYY-MM-DD) drops likes on posts older than that date — no re-scrape, no cost."""
     data = EVENTS / event / "data"
     if not (data / "likers.json").exists():
         raise RuntimeError(f"No likers.json in {data} — run run.py --event {event} first.")
@@ -38,6 +40,20 @@ def build_engagers(event: str, log=print) -> Path:
         enriched = json.loads((data / "enriched.json").read_text())
     except FileNotFoundError:
         enriched = []
+
+    if since:
+        url_date = {p["url"]: (p.get("timestamp") or "")[:10] for p in posts if p.get("url")}
+        code_date = {p["shortCode"]: (p.get("timestamp") or "")[:10] for p in posts if p.get("shortCode")}
+
+        def post_date(l: dict) -> str:
+            ref = str(l.get("liked_post") or l.get("sourcePost") or l.get("postUrl") or "")
+            if ref in url_date:
+                return url_date[ref]
+            return next((d for c, d in code_date.items() if c and c in ref), "")
+
+        before = len(likers)
+        likers = [l for l in likers if post_date(l) >= since]
+        log(f"since {since}: kept {len(likers)}/{before} likes (dropped likes on older posts)")
 
     seeds = {(p.get("ownerUsername") or "").lower() for p in posts if p.get("ownerUsername")}
 
@@ -102,9 +118,11 @@ def build_engagers(event: str, log=print) -> Path:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--event", required=True, help="event folder name under events/")
+    ap.add_argument("--since", metavar="YYYY-MM-DD",
+                    help="ignore likes on posts older than this date (free — uses cached data)")
     args = ap.parse_args()
     try:
-        build_engagers(args.event)
+        build_engagers(args.event, since=args.since)
     except RuntimeError as e:
         raise SystemExit(str(e))
 

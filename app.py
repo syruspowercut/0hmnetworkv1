@@ -82,7 +82,7 @@ def worker(event: str, since: str | None, likers_per_post: int, enrich_top: int,
             log("\nPosts fetched. Untick \"posts only\" and run again to scrape likers.")
         else:
             log("")
-            summary.build_engagers(event, log=log)
+            summary.build_engagers(event, since=since, log=log)
             log("\nDone.")
     except Exception as e:  # surface anything — actor failures, bad token, etc.
         _job["error"] = f"{type(e).__name__}: {e}"
@@ -212,7 +212,7 @@ INDEX = """<!doctype html><meta charset="utf-8"><title>ig-engagers</title>""" + 
   <textarea name="seeds" rows="3" placeholder="bhamacs&#10;digbethnightlife" required>{{ seeds }}</textarea>
 
   <div class="row">
-    <div><label>Posts since <small>— optional</small></label><input type="date" name="since"></div>
+    <div><label>Posts since <small>— optional; on a re-run it re-filters cached likes for free</small></label><input type="date" name="since"></div>
     <div><label>Likers per post</label><input type="number" name="likers" value="{{ defaults.likers }}" min="1"></div>
     <div><label>Profiles to enrich <small>— 0 = skip</small></label><input type="number" name="enrich" value="{{ defaults.enrich }}" min="0"></div>
   </div>
