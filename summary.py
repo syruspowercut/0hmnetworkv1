@@ -26,14 +26,11 @@ ROOT = Path(__file__).parent
 EVENTS = ROOT / "events"
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--event", required=True, help="event folder name under events/")
-    args = ap.parse_args()
-
-    data = EVENTS / args.event / "data"
+def build_engagers(event: str, log=print) -> Path:
+    """Write engagers.csv for one event from its cached data. Raises RuntimeError if not scraped yet."""
+    data = EVENTS / event / "data"
     if not (data / "likers.json").exists():
-        raise SystemExit(f"No likers.json in {data} — run run.py --event {args.event} first.")
+        raise RuntimeError(f"No likers.json in {data} — run run.py --event {event} first.")
 
     likers = json.loads((data / "likers.json").read_text())
     posts = json.loads((data / "posts.json").read_text())
@@ -96,9 +93,20 @@ def main() -> None:
         w.writerows(rows)
 
     enriched_count = sum(1 for r in rows if r["enriched"] == "yes")
-    print(f"wrote {len(rows)} engagers → {out}")
-    print(f"  with follower data: {enriched_count}")
-    print(f"  without (need enrichment for followers): {len(rows) - enriched_count}")
+    log(f"wrote {len(rows)} engagers → {out}")
+    log(f"  with follower data: {enriched_count}")
+    log(f"  without (need enrichment for followers): {len(rows) - enriched_count}")
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--event", required=True, help="event folder name under events/")
+    args = ap.parse_args()
+    try:
+        build_engagers(args.event)
+    except RuntimeError as e:
+        raise SystemExit(str(e))
 
 
 if __name__ == "__main__":

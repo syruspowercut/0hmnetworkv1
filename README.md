@@ -29,23 +29,48 @@ Pay-per-result on Apify. A real run — one seed, 57 posts, ~2,500 likers, 250 p
 enrichments — came to about **$5**. Apify's free tier gives $5/month credit, which
 covers one run of that size. Each invocation prints its spend at the end.
 
-## Setup
+## Quick start (Mac, no terminal)
 
-Needs Python 3.11+.
+1. Get the code — either
+
+   ```bash
+   git clone https://github.com/syruspowercut/0hmnetworkv1.git
+   ```
+
+   or **Code → Download ZIP** on GitHub and unzip it.
+
+2. Double-click **`start.command`**. The first run installs Python dependencies (about
+   30 seconds); after that your browser opens at `http://127.0.0.1:8765`.
+
+3. Paste your Apify token (sign up at [apify.com](https://apify.com) — free tier gives
+   $5/month credit, enough for one decent run), type an event name and one or more seed
+   handles, hit **Run**. Progress streams to the page; CSVs are downloadable when it's
+   done.
+
+Everything runs on your machine. The only outbound traffic is to Apify. Your token is
+saved to `.env` in the folder and nowhere else.
+
+**If macOS refuses to open `start.command`** ("from an unidentified developer") —
+that's Gatekeeper on files downloaded as a ZIP. Right-click → **Open** → **Open**. Only
+needed once. A `git clone` doesn't trigger it.
+
+**If it opens in a text editor instead of running** — the ZIP dropped the executable
+bit. Open Terminal, `cd` into the folder, and run `bash start.command`.
+
+**If macOS asks to install "command line developer tools"** — say yes; that's how a
+fresh Mac gets `python3`. Then double-click again.
+
+## Command line
+
+Same pipeline without the UI. Needs Python 3.11+.
 
 ```bash
-git clone https://github.com/syruspowercut/0hmnetworkv1.git
-cd 0hmnetworkv1
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env     # paste your Apify token in
 ```
 
-Sign up at [apify.com](https://apify.com), copy your token from
-[Settings → Integrations](https://console.apify.com/settings/integrations), and paste
-it into `.env`.
-
-## Running for a new event
+### Running for a new event
 
 1. Make a folder under `events/`. The name is just a label:
 
@@ -81,7 +106,7 @@ it into `.env`.
 
 Output lands in `events/birmingham-2026-08-15/data/`.
 
-### Flags
+#### Flags
 
 ```
 --event NAME            event folder under events/ (required)
@@ -94,7 +119,7 @@ Output lands in `events/birmingham-2026-08-15/data/`.
 `--enrich-top` is the main cost lever after the likers scrape. Profiles without
 enrichment still appear in `engagers.csv`, just without follower counts.
 
-### Re-running cheaply
+#### Re-running cheaply
 
 Every step caches to `events/<event>/data/*.json`. To redo a step, delete its cache
 and run again — earlier steps are skipped:
@@ -103,7 +128,7 @@ and run again — earlier steps are skipped:
 - Enrich more people → delete `enriched.json`, bump `--enrich-top`
 - Add a seed → delete everything in `data/`
 
-### DM template
+#### DM template
 
 If `events/<event>/dm_template.txt` exists, every row in `ranked.csv` gets a `dm`
 column with that text, personalised. Write whatever you like; these labels are swapped

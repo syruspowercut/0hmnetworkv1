@@ -23,6 +23,7 @@ import csv
 import json
 import os
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,7 @@ class Run:
     likers_per_post: int
     enrich_top: int
     client: ApifyClient
+    log: Callable[[str], None] = print
     apify_runs: list[tuple[str, str]] = field(default_factory=list)  # (actor, run_id)
 
 
@@ -105,10 +107,10 @@ def _post_timestamp(p: dict) -> datetime | None:
 # --- step 1: posts -------------------------------------------------
 def step_posts(run: Run, seeds: list[str]) -> list[dict]:
     if (data := cached(run, "posts")) is not None:
-        print(f"[posts]      cached: {len(data)} posts")
+        run.log(f"[posts]      cached: {len(data)} posts")
         return data
 
-    print(f"[posts]      scraping up to {run.posts_limit} posts from {len(seeds)} seed(s)...")
+    run.log(f"[posts]      scraping up to {run.posts_limit} posts from {len(seeds)} seed(s)...")
     raw = call_actor(run, POSTS_ACTOR, {
         "directUrls": [f"https://www.instagram.com/{s}/" for s in seeds],
         "resultsType": "posts",
@@ -118,10 +120,10 @@ def step_posts(run: Run, seeds: list[str]) -> list[dict]:
 
     if run.since:
         posts = [p for p in raw if (dt := _post_timestamp(p)) is not None and dt >= run.since]
-        print(f"[posts]      kept {len(posts)}/{len(raw)} posts since {run.since.date()}")
+        run.log(f"[posts]      kept {len(posts)}/{len(raw)} posts since {run.since.date()}")
     else:
         posts = raw
-        print(f"[posts]      got {len(posts)} posts")
+        run.log(f"[posts]      got {len(posts)} posts")
     write(run, "posts", posts)
     return posts
 
@@ -129,7 +131,7 @@ def step_posts(run: Run, seeds: list[str]) -> list[dict]:
 # --- step 2: likers ------------------------------------------------
 def step_likers(run: Run, posts: list[dict]) -> list[dict]:
     if (data := cached(run, "likers")) is not None:
-        print(f"[likers]     cached: {len(data)} liker entries")
+        run.log(f"[likers]     cached: {len(data)} liker entries")
         return data
 
     # post URL → seed (= post owner) so we can tag each liker.
@@ -149,7 +151,7 @@ def step_likers(run: Run, posts: list[dict]) -> list[dict]:
 
     only_seed = next(iter(set(url_to_seed.values()))) if len(set(url_to_seed.values())) == 1 else ""
 
-    print(f"[likers]     scraping likers on {len(urls)} posts (cap {run.likers_per_post}/post)...")
+    run.log(f"[likers]     scraping likers on {len(urls)} posts (cap {run.likers_per_post}/post)...")
     items = call_actor(run, LIKERS_ACTOR, {
         "posts": urls,
         "max_count": run.likers_per_post,
@@ -173,14 +175,14 @@ def step_likers(run: Run, posts: list[dict]) -> list[dict]:
 
     write(run, "likers", items)
     real = sum(1 for i in items if i.get("username"))
-    print(f"[likers]     got {len(items)} liker entries ({real} with usernames)")
+    run.log(f"[likers]     got {len(items)} liker entries ({real} with usernames)")
     return items
 
 
 # --- step 3: aggregate ---------------------------------------------
 def step_aggregate(run: Run, likers: list[dict], seeds: list[str]) -> list[dict]:
     if (data := cached(run, "candidates")) is not None:
-        print(f"[aggregate]  cached: {len(data)} candidates")
+        run.log(f"[aggregate]  cached: {len(data)} candidates")
         return data
 
     seeds_lower = {s.lower() for s in seeds}
@@ -220,14 +222,14 @@ def step_aggregate(run: Run, likers: list[dict], seeds: list[str]) -> list[dict]
         if keep(u, n)
     ]
     write(run, "candidates", candidates)
-    print(f"[aggregate]  {len(candidates)} candidates after filtering")
+    run.log(f"[aggregate]  {len(candidates)} candidates after filtering")
     return candidates
 
 
 # --- step 4: enrich ------------------------------------------------
 def step_enrich(run: Run, candidates: list[dict]) -> list[dict]:
     if (data := cached(run, "enriched")) is not None:
-        print(f"[enrich]     cached: {len(data)} profiles")
+        run.log(f"[enrich]     cached: {len(data)} profiles")
         return data
 
     top = candidates[:run.enrich_top]
@@ -236,7 +238,7 @@ def step_enrich(run: Run, candidates: list[dict]) -> list[dict]:
         write(run, "enriched", [])
         return []
 
-    print(f"[enrich]     scraping {len(usernames)} profiles...")
+    run.log(f"[enrich]     scraping {len(usernames)} profiles...")
     profiles = call_actor(run, PROFILE_ACTOR, {"usernames": usernames})
     by_user = {(p.get("username") or "").lower(): p for p in profiles}
 
@@ -258,7 +260,7 @@ def step_enrich(run: Run, candidates: list[dict]) -> list[dict]:
         })
 
     write(run, "enriched", merged)
-    print(f"[enrich]     enriched {len(merged)} profiles")
+    run.log(f"[enrich]     enriched {len(merged)} profiles")
     return merged
 
 
@@ -367,9 +369,9 @@ def step_rank(run: Run, enriched: list[dict]) -> None:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             w.writeheader()
             w.writerows(rows)
-        print(f"[rank]       wrote {len(rows)} ranked rows → {out}")
+        run.log(f"[rank]       wrote {len(rows)} ranked rows → {out}")
     else:
-        print(f"[rank]       no rows passed filters — check {run.data / 'enriched.json'}")
+        run.log(f"[rank]       no rows passed filters — check {run.data / 'enriched.json'}")
 
     if rejected:
         rej_out = run.data / "rejected.csv"
@@ -377,25 +379,86 @@ def step_rank(run: Run, enriched: list[dict]) -> None:
             w = csv.DictWriter(f, fieldnames=list(rejected[0].keys()))
             w.writeheader()
             w.writerows(rejected)
-        print(f"[rank]       wrote {len(rejected)} rejected rows → {rej_out}")
+        run.log(f"[rank]       wrote {len(rejected)} rejected rows → {rej_out}")
 
 
 # --- cost ------------------------------------------------------------
 def print_cost(run: Run) -> None:
     if not run.apify_runs:
-        print("\n[cost]       no Apify runs this invocation (everything cached)")
+        run.log("\n[cost]       no Apify runs this invocation (everything cached)")
         return
     total = 0.0
-    print("\n[cost]       Apify spend this invocation:")
+    run.log("\n[cost]       Apify spend this invocation:")
     for actor, run_id in run.apify_runs:
         info = run.client.run(run_id).get() or {}
         usd = float(info.get("usageTotalUsd") or 0)
         total += usd
-        print(f"             {actor:<45} ${usd:.2f}")
-    print(f"             {'total':<45} ${total:.2f}")
+        run.log(f"             {actor:<45} ${usd:.2f}")
+    run.log(f"             {'total':<45} ${total:.2f}")
 
 
 # --- main ----------------------------------------------------------
+def run_pipeline(
+    event: str,
+    since: str | None = None,
+    posts_limit: int = POSTS_FETCH_LIMIT,
+    likers_per_post: int = LIKERS_PER_POST,
+    enrich_top: int = TOP_CANDIDATES_TO_ENRICH,
+    log: Callable[[str], None] = print,
+) -> Run:
+    """Run all five steps for one event. Raises RuntimeError on bad config."""
+    load_dotenv(ROOT / ".env", override=True)
+
+    token = os.environ.get("APIFY_TOKEN")
+    if not token or token.startswith("apify_api_xxxx"):
+        raise RuntimeError(
+            "APIFY_TOKEN missing or placeholder. Copy .env.example to .env and "
+            "paste your token from https://console.apify.com/settings/integrations"
+        )
+
+    event_dir = EVENTS / event
+    if not event_dir.is_dir():
+        raise RuntimeError(
+            f"No event folder at {event_dir}\n"
+            f"Create it with a seeds.txt inside (see events/reading-2026-05-22/ for an example)."
+        )
+
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise RuntimeError(f"since must be YYYY-MM-DD, got {since!r}")
+
+    run = Run(
+        event_dir=event_dir,
+        data=event_dir / "data",
+        seeds_file=event_dir / "seeds.txt",
+        dm_file=event_dir / "dm_template.txt",
+        location_file=event_dir / "location_terms.txt",
+        since=since_dt,
+        posts_limit=posts_limit,
+        likers_per_post=likers_per_post,
+        enrich_top=enrich_top,
+        client=ApifyClient(token),
+        log=log,
+    )
+    run.data.mkdir(exist_ok=True)
+
+    seeds = [s.lstrip("@") for s in load_lines(run.seeds_file)]
+    if not seeds:
+        raise RuntimeError(f"No seeds in {run.seeds_file}. Add an IG handle (one per line).")
+    log(f"event: {event}\nseeds: {seeds}\n")
+
+    posts = step_posts(run, seeds)
+    likers = step_likers(run, posts)
+    candidates = step_aggregate(run, likers, seeds)
+    enriched = step_enrich(run, candidates)
+    step_rank(run, enriched)
+    print_cost(run)
+    return run
+
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--event", required=True,
@@ -413,54 +476,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    load_dotenv(ROOT / ".env")
-
-    token = os.environ.get("APIFY_TOKEN")
-    if not token or token.startswith("apify_api_xxxx"):
-        raise SystemExit(
-            "APIFY_TOKEN missing or placeholder. Copy .env.example to .env and "
-            "paste your token from https://console.apify.com/settings/integrations"
-        )
-
-    event_dir = EVENTS / args.event
-    if not event_dir.is_dir():
-        raise SystemExit(
-            f"No event folder at {event_dir}\n"
-            f"Create it with a seeds.txt inside (see events/reading-2026-05-22/ for an example)."
-        )
-
-    since = None
-    if args.since:
-        try:
-            since = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
-        except ValueError:
-            raise SystemExit(f"--since must be YYYY-MM-DD, got {args.since!r}")
-
-    run = Run(
-        event_dir=event_dir,
-        data=event_dir / "data",
-        seeds_file=event_dir / "seeds.txt",
-        dm_file=event_dir / "dm_template.txt",
-        location_file=event_dir / "location_terms.txt",
-        since=since,
-        posts_limit=args.posts_limit,
-        likers_per_post=args.likers_per_post,
-        enrich_top=args.enrich_top,
-        client=ApifyClient(token),
-    )
-    run.data.mkdir(exist_ok=True)
-
-    seeds = [s.lstrip("@") for s in load_lines(run.seeds_file)]
-    if not seeds:
-        raise SystemExit(f"No seeds in {run.seeds_file}. Add an IG handle (one per line).")
-    print(f"event: {args.event}\nseeds: {seeds}\n")
-
-    posts = step_posts(run, seeds)
-    likers = step_likers(run, posts)
-    candidates = step_aggregate(run, likers, seeds)
-    enriched = step_enrich(run, candidates)
-    step_rank(run, enriched)
-    print_cost(run)
+    try:
+        run_pipeline(args.event, args.since, args.posts_limit, args.likers_per_post, args.enrich_top)
+    except RuntimeError as e:
+        raise SystemExit(str(e))
 
 
 if __name__ == "__main__":
