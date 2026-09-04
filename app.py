@@ -73,13 +73,17 @@ def form_text(name: str) -> str:
     return request.form.get(name, "").replace("\r\n", "\n").replace("\r", "\n")
 
 
-def worker(event: str, since: str | None, likers_per_post: int, enrich_top: int) -> None:
+def worker(event: str, since: str | None, likers_per_post: int, enrich_top: int, posts_only: bool) -> None:
     log = _job["log"].append
     try:
-        pipeline.run_pipeline(event, since, likers_per_post=likers_per_post, enrich_top=enrich_top, log=log)
-        log("")
-        summary.build_engagers(event, log=log)
-        log("\nDone.")
+        pipeline.run_pipeline(event, since, likers_per_post=likers_per_post, enrich_top=enrich_top, log=log,
+                              stop_after="posts" if posts_only else None)
+        if posts_only:
+            log("\nPosts fetched. Untick \"posts only\" and run again to scrape likers.")
+        else:
+            log("")
+            summary.build_engagers(event, log=log)
+            log("\nDone.")
     except Exception as e:  # surface anything — actor failures, bad token, etc.
         _job["error"] = f"{type(e).__name__}: {e}"
         log(f"\nERROR — {type(e).__name__}: {e}")
@@ -123,9 +127,9 @@ def start_run():
         if not event or not seeds_txt:
             return "Event name and at least one seed handle are required.", 400
 
-        def as_int(name: str, default: int) -> int:
+        def as_int(name: str, default: int, lo: int = 1) -> int:
             try:
-                return max(1, int(request.form.get(name, "") or default))
+                return max(lo, int(request.form.get(name, "") or default))
             except ValueError:
                 return default
 
@@ -139,7 +143,8 @@ def start_run():
         threading.Thread(
             target=worker,
             args=(event, request.form.get("since", "").strip() or None,
-                  as_int("likers", pipeline.LIKERS_PER_POST), as_int("enrich", pipeline.TOP_CANDIDATES_TO_ENRICH)),
+                  as_int("likers", pipeline.LIKERS_PER_POST), as_int("enrich", pipeline.TOP_CANDIDATES_TO_ENRICH, lo=0),
+                  request.form.get("posts_only") == "on"),
             daemon=True,
         ).start()
     return redirect(url_for("status", event=event))
@@ -209,9 +214,10 @@ INDEX = """<!doctype html><meta charset="utf-8"><title>ig-engagers</title>""" + 
   <div class="row">
     <div><label>Posts since <small>— optional</small></label><input type="date" name="since"></div>
     <div><label>Likers per post</label><input type="number" name="likers" value="{{ defaults.likers }}" min="1"></div>
-    <div><label>Profiles to enrich</label><input type="number" name="enrich" value="{{ defaults.enrich }}" min="1"></div>
+    <div><label>Profiles to enrich <small>— 0 = skip</small></label><input type="number" name="enrich" value="{{ defaults.enrich }}" min="0"></div>
   </div>
-  <p class="muted">Cost is pay-per-result on Apify. One seed, ~60 posts, 300 likers/post cap, 250 enrichments ≈ $5.</p>
+  <p class="muted">Cost is pay-per-result on Apify. Likers are the big line: posts × cap × $1.55/1k. Enrichment (follower counts + bios) is $2.60/1k — set it to 0 if you only need <b>engagers.csv</b>.</p>
+  <label style="font-weight:400"><input type="checkbox" name="posts_only"> <b>Posts only</b> <small>— fetch the posts (~5¢), print like counts and a cost estimate at several caps, and stop. Run again without it to continue; posts are cached.</small></label>
 
   <label>Location terms <small>— optional; words in a bio that mark someone as local. One per line.</small></label>
   <textarea name="location" rows="3" placeholder="birmingham&#10;brum&#10;b1">{{ location }}</textarea>

@@ -29,6 +29,21 @@ Pay-per-result on Apify. A real run — one seed, 57 posts, ~2,500 likers, 250 p
 enrichments — came to about **$5**. Apify's free tier gives $5/month credit, which
 covers one run of that size. Each invocation prints its spend at the end.
 
+Almost all of it is the likers step: **posts × likers-per-post cap × ~$1.55/1k**. So
+the levers, biggest first:
+
+1. **Fewer posts** — a `--since` date, or a lower posts limit.
+2. **Lower likers cap** — you keep the first N likers per post. That undercounts how many
+   posts each person liked, but rarely changes *who* tops the list; it mostly drops the
+   people who liked only a couple of posts.
+3. **Enrichment → 0** — skips the follower-count/bio scrape ($2.60/1k). `engagers.csv`
+   still works, just without follower numbers. Profile pics cost nothing either way.
+
+To see what a run will cost before paying for it, use **posts only** (the checkbox in
+the UI, or `--stop-after posts`): it fetches the posts (~5¢), prints like counts and a
+cost estimate at several caps, and stops. Run again without it to continue — the posts
+are cached.
+
 ## Quick start (Mac, no terminal)
 
 1. Get the code — either
@@ -113,7 +128,8 @@ Output lands in `events/birmingham-2026-08-15/data/`.
 --since YYYY-MM-DD      only keep posts on/after this date
 --posts-limit N         max recent posts per seed to fetch (default 200)
 --likers-per-post N     cap on likers scraped per post (default 300)
---enrich-top N          how many top candidates get a profile scrape (default 250)
+--enrich-top N          how many top candidates get a profile scrape (default 250; 0 = skip)
+--stop-after posts      fetch posts, print a likers cost estimate at several caps, stop
 ```
 
 `--enrich-top` is the main cost lever after the likers scrape. Profiles without

@@ -44,6 +44,10 @@ LIKERS_ACTOR = os.environ.get("LIKERS_ACTOR", "datadoping/instagram-likes-scrape
 POSTS_ACTOR = os.environ.get("POSTS_ACTOR", "apify/instagram-scraper")
 PROFILE_ACTOR = os.environ.get("PROFILE_ACTOR", "apify/instagram-profile-scraper")
 
+# Used only for the cost estimate printed before the likers step. Check the
+# actor's page on Apify if the number looks stale.
+LIKERS_USD_PER_1K = 1.55   # datadoping/instagram-likes-scraper, Sep 2026
+
 # Scoring bands for step 5. Edit here if your idea of "micro" differs.
 FOLLOWER_HARD_MIN = 500
 FOLLOWER_HARD_MAX = 100_000
@@ -64,6 +68,7 @@ class Run:
     enrich_top: int
     client: ApifyClient
     log: Callable[[str], None] = print
+    stop_after: str | None = None          # "posts" = fetch posts, print estimate, stop
     apify_runs: list[tuple[str, str]] = field(default_factory=list)  # (actor, run_id)
 
 
@@ -102,6 +107,25 @@ def field(obj, *names, default=None):
 
 def as_dict(obj) -> dict:
     return obj if isinstance(obj, dict) else vars(obj)
+
+
+def likers_estimate(posts: list[dict], cap: int) -> tuple[int, int, float, int]:
+    """(visible likes, est. liker rows at this cap, est. USD, posts with hidden counts).
+    Posts whose like count is hidden are assumed to have the median of the visible ones."""
+    likes = [int(p.get("likesCount") or 0) for p in posts]
+    visible = sorted(l for l in likes if l > 0)
+    hidden = len(likes) - len(visible)
+    guess = visible[len(visible) // 2] if visible else cap
+    rows = sum(min(l if l > 0 else guess, cap) for l in likes)
+    return sum(visible), rows, rows / 1000 * LIKERS_USD_PER_1K, hidden
+
+
+def log_estimate(run: Run, posts: list[dict], caps: tuple[int, ...]) -> None:
+    for cap in caps:
+        total, rows, usd, hidden = likers_estimate(posts, cap)
+        run.log(f"[estimate]   cap {cap:>4}/post → ~{rows:>7,} liker rows ≈ ${usd:.2f}")
+    note = f" ({hidden} with hidden counts, assumed at the median)" if hidden else ""
+    run.log(f"[estimate]   {total:,} likes across {len(posts)} posts{note}; likers billed ${LIKERS_USD_PER_1K}/1k")
 
 
 def call_actor(run: Run, actor: str, run_input: dict) -> list[dict]:
@@ -171,6 +195,7 @@ def step_likers(run: Run, posts: list[dict]) -> list[dict]:
 
     only_seed = next(iter(set(url_to_seed.values()))) if len(set(url_to_seed.values())) == 1 else ""
 
+    log_estimate(run, posts, (run.likers_per_post,))
     run.log(f"[likers]     scraping likers on {len(urls)} posts (cap {run.likers_per_post}/post)...")
     items = call_actor(run, LIKERS_ACTOR, {
         "posts": urls,
@@ -425,6 +450,7 @@ def run_pipeline(
     likers_per_post: int = LIKERS_PER_POST,
     enrich_top: int = TOP_CANDIDATES_TO_ENRICH,
     log: Callable[[str], None] = print,
+    stop_after: str | None = None,
 ) -> Run:
     """Run all five steps for one event. Raises RuntimeError on bad config."""
     load_dotenv(ROOT / ".env", override=True)
@@ -462,6 +488,7 @@ def run_pipeline(
         enrich_top=enrich_top,
         client=ApifyClient(token),
         log=log,
+        stop_after=stop_after,
     )
     run.data.mkdir(exist_ok=True)
 
@@ -471,6 +498,12 @@ def run_pipeline(
     log(f"event: {event}\nseeds: {seeds}\n")
 
     posts = step_posts(run, seeds)
+    if run.stop_after == "posts":
+        run.log("")
+        log_estimate(run, posts, (50, 100, 300, 1000))
+        run.log("[estimate]   Re-run without posts-only to scrape likers; posts are cached, so that step costs nothing again.")
+        print_cost(run)
+        return run
     likers = step_likers(run, posts)
     candidates = step_aggregate(run, likers, seeds)
     enriched = step_enrich(run, candidates)
@@ -490,14 +523,17 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--likers-per-post", type=int, default=LIKERS_PER_POST,
                     help=f"per-post cap on likers scraped (default {LIKERS_PER_POST})")
     ap.add_argument("--enrich-top", type=int, default=TOP_CANDIDATES_TO_ENRICH,
-                    help=f"how many top candidates get a profile scrape (default {TOP_CANDIDATES_TO_ENRICH})")
+                    help=f"how many top candidates get a profile scrape (default {TOP_CANDIDATES_TO_ENRICH}; 0 = skip)")
+    ap.add_argument("--stop-after", choices=["posts"],
+                    help="fetch posts, print a likers cost estimate at several caps, and stop (~5c)")
     return ap.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        run_pipeline(args.event, args.since, args.posts_limit, args.likers_per_post, args.enrich_top)
+        run_pipeline(args.event, args.since, args.posts_limit, args.likers_per_post, args.enrich_top,
+                     stop_after=args.stop_after)
     except RuntimeError as e:
         raise SystemExit(str(e))
 
