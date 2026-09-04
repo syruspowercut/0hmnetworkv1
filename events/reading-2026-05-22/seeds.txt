@@ -1,0 +1,2 @@
+# One Instagram handle per line (with or without @). Lines starting with # are ignored.
+readingacs

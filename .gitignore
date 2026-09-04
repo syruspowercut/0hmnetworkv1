@@ -1,0 +1,14 @@
+# secrets
+.env
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# scrape output — real people's handles/pics; keep out of the repo
+events/*/data/
+
+# macOS
+.DS_Store

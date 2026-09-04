@@ -1,0 +1,13 @@
+# Terms that, if found in a candidate's bio or name, boost their location score.
+# One per line, case-insensitive. Postcodes, uni nicknames, local slang all work.
+reading
+rdg
+rg1
+rg2
+rg4
+rg6
+rg30
+rg31
+uniofreading
+universityofreading
+uor
